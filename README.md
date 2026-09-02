@@ -159,12 +159,56 @@ Delivery statuses: `pending` → `delivered` or `failed`. Each attempt stores ti
 - Queryable delivery + attempt history via API
 - `/health` and `/ready`
 
-## Limits (by design for this assessment)
+## Trade-offs
 
-- Single-node SQLite (not multi-replica safe)
-- Best-effort ordering
-- Payload filters: equality on dotted paths only
-- No multi-tenant auth (shared API key)
+### SQLite vs Postgres
+
+**Chose SQLite** for zero ops on a single Droplet. API and consumer share one file via a bind mount (`./data`).
+
+- **Pro:** Simple deploy, durable local audit, enough for assessment traffic  
+- **Con:** Not multi-replica safe; write contention under load; **single point of failure** — if the DB is down, ingest and fanout both stop  
+
+Scale-out path: Managed Postgres (or similar) with the same schema; app code stays mostly the same.
+
+### RabbitMQ as work buffer, not event store
+
+Messages carry `{event_id}` only. Full payload and subscriptions live in SQLite.
+
+- **Pro:** Small queue messages; one source of truth for what we deliver; clear delivery audit in DB  
+- **Con:** Consumer **must** read SQLite to fan out; MQ alone cannot reconstruct the event; DB outage leaves ids stranded in the queue  
+
+Alternative: put the full event on the bus so ingest can succeed when the DB is briefly down, and use SQLite mainly for subscriptions + delivery audit.
+
+### Dual-write on ingest (DB then MQ)
+
+We commit the event row (`status=accepted`), then publish with confirms. Publish failure → `publish_failed` + HTTP `503`.
+
+- **Pro:** Never enqueue work without a durable event row; client knows publish failed  
+- **Con:** Classic dual-write: no cross-system transaction; client retries can create **new UUIDs** (no idempotency key yet); possible `accepted` row with no message if we crash after publish but before response  
+
+Production path: transactional **outbox** and/or `Idempotency-Key`.
+
+### At-least-once webhook delivery
+
+Consumer acks after processing; HTTP may succeed before we mark `delivered`; retries and redelivery can duplicate POSTs.
+
+- **Pro:** Prefer “subscriber may see it twice” over silent loss  
+- **Con:** Not exactly-once; subscribers should dedupe on `X-Event-Id` / event `id`  
+
+`UNIQUE(event_id, subscription_id)` limits duplicate delivery **rows**, not duplicate HTTP calls in every crash window.
+
+### Soft-delete subscriptions
+
+`DELETE /subscriptions/{id}` sets `active=0`. Delivery history stays; fanout ignores inactive rows.
+
+- **Pro:** Audits survive unregistering a webhook  
+- **Con:** Rows accumulate; list API shows active only (inactive still queryable via delivery endpoints)
+
+### Auth and ops scope
+
+Shared bearer `API_KEY` and Compose-on-one-Droplet are intentional for the assessment — not multi-tenant JWT, rate limits, or HA.
+
+Also by design here: **best-effort ordering**, and payload filters limited to **dotted-path equality** (AND), not full JSONLogic.
 
 ## Local run without rebuilding images
 
