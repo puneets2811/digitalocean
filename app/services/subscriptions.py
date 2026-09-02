@@ -61,31 +61,19 @@ async def create_subscription(
 
 
 async def list_subscriptions(conn: aiosqlite.Connection) -> list[SubscriptionOut]:
-    cursor = await conn.execute("SELECT * FROM subscriptions ORDER BY created_at DESC")
+    cursor = await conn.execute(
+        "SELECT * FROM subscriptions WHERE active = 1 ORDER BY created_at DESC"
+    )
     rows = await cursor.fetchall()
     return [_to_out(row) for row in rows]
 
 
 async def delete_subscription(conn: aiosqlite.Connection, subscription_id: str) -> bool:
-    # Deliveries reference subscriptions; remove dependent audit rows first.
-    delivery_rows = await (
-        await conn.execute(
-            "SELECT id FROM deliveries WHERE subscription_id = ?",
-            (subscription_id,),
-        )
-    ).fetchall()
-    delivery_ids = [row["id"] for row in delivery_rows]
-    if delivery_ids:
-        placeholders = ",".join("?" * len(delivery_ids))
-        await conn.execute(
-            f"DELETE FROM delivery_attempts WHERE delivery_id IN ({placeholders})",
-            delivery_ids,
-        )
-        await conn.execute(
-            f"DELETE FROM deliveries WHERE id IN ({placeholders})",
-            delivery_ids,
-        )
-    cursor = await conn.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
+    """Soft-delete: deactivate so fanout stops but delivery audits remain."""
+    cursor = await conn.execute(
+        "UPDATE subscriptions SET active = 0 WHERE id = ? AND active = 1",
+        (subscription_id,),
+    )
     await conn.commit()
     return cursor.rowcount > 0
 

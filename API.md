@@ -172,11 +172,13 @@ List all subscriptions (newest first).
 
 ### `DELETE /subscriptions/{subscription_id}`
 
-Remove a subscription.
+Soft-delete a subscription: sets `active` to `false`. The row remains so delivery audit history stays intact and `GET /subscriptions/{id}/deliveries` still works. Fanout only considers `active = true` subscriptions.
+
+`GET /subscriptions` returns **active** subscriptions only.
 
 **Response `204 No Content`** — empty body.
 
-**Errors:** `401`, `404`
+**Errors:** `401`, `404` (unknown id, or already inactive)
 
 ---
 

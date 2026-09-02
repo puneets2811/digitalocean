@@ -60,6 +60,10 @@ def test_subscription_crud(client: TestClient, auth_headers: dict[str, str]) -> 
     deleted = client.delete(f"/subscriptions/{sub['id']}", headers=auth_headers)
     assert deleted.status_code == 204
 
+    listed_after = client.get("/subscriptions", headers=auth_headers)
+    assert listed_after.status_code == 200
+    assert listed_after.json() == []
+
     missing = client.delete(f"/subscriptions/{sub['id']}", headers=auth_headers)
     assert missing.status_code == 404
 

@@ -39,7 +39,10 @@ async def test_create_list_delete_subscription(db: Connection) -> None:
     assert rows[0]["secret"] == "custom-secret"
 
     assert await subscription_service.delete_subscription(db, created.id) is True
-    assert await subscription_service.get_subscription(db, created.id) is None
+    assert await subscription_service.get_subscription(db, created.id) is not None
+    assert (await subscription_service.get_subscription(db, created.id)).active is False
+    assert await subscription_service.list_subscriptions(db) == []
+    assert await subscription_service.list_active_subscription_rows(db) == []
     assert await subscription_service.delete_subscription(db, created.id) is False
 
 
@@ -109,7 +112,7 @@ async def test_ingest_event_marks_publish_failed_on_mq_error(db: Connection) -> 
 
 
 @pytest.mark.anyio
-async def test_delete_subscription_cascades_deliveries(db: Connection) -> None:
+async def test_delete_subscription_preserves_deliveries(db: Connection) -> None:
     event = await event_service.create_event(
         db,
         EventCreate(type="t", source="s", payload={}),
@@ -130,10 +133,18 @@ async def test_delete_subscription_cascades_deliveries(db: Connection) -> None:
         error=None,
         duration_ms=10,
     )
+    await delivery_service.set_delivery_status(db, delivery_id, "delivered")
 
     assert await subscription_service.delete_subscription(db, sub.id) is True
-    assert await subscription_service.get_subscription(db, sub.id) is None
-    assert await delivery_service.get_delivery(db, delivery_id) is None
+    fetched = await subscription_service.get_subscription(db, sub.id)
+    assert fetched is not None
+    assert fetched.active is False
+    assert await subscription_service.list_subscriptions(db) == []
+
+    delivery = await delivery_service.get_delivery(db, delivery_id)
+    assert delivery is not None
+    assert delivery.status == "delivered"
+    assert len(delivery.attempts) == 1
 
 
 @pytest.mark.anyio
