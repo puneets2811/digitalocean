@@ -67,6 +67,24 @@ async def list_subscriptions(conn: aiosqlite.Connection) -> list[SubscriptionOut
 
 
 async def delete_subscription(conn: aiosqlite.Connection, subscription_id: str) -> bool:
+    # Deliveries reference subscriptions; remove dependent audit rows first.
+    delivery_rows = await (
+        await conn.execute(
+            "SELECT id FROM deliveries WHERE subscription_id = ?",
+            (subscription_id,),
+        )
+    ).fetchall()
+    delivery_ids = [row["id"] for row in delivery_rows]
+    if delivery_ids:
+        placeholders = ",".join("?" * len(delivery_ids))
+        await conn.execute(
+            f"DELETE FROM delivery_attempts WHERE delivery_id IN ({placeholders})",
+            delivery_ids,
+        )
+        await conn.execute(
+            f"DELETE FROM deliveries WHERE id IN ({placeholders})",
+            delivery_ids,
+        )
     cursor = await conn.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
     await conn.commit()
     return cursor.rowcount > 0

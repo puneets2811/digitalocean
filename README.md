@@ -2,6 +2,8 @@
 
 Production-shaped FastAPI service that accepts structured events, matches subscription rules, and delivers signed webhooks with retries and queryable delivery history.
 
+**API contract:** see [API.md](API.md) (auth, endpoints, webhook payload, status codes).
+
 ## Stack
 
 - FastAPI (ingest + subscription + delivery query APIs)

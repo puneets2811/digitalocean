@@ -109,6 +109,34 @@ async def test_ingest_event_marks_publish_failed_on_mq_error(db: Connection) -> 
 
 
 @pytest.mark.anyio
+async def test_delete_subscription_cascades_deliveries(db: Connection) -> None:
+    event = await event_service.create_event(
+        db,
+        EventCreate(type="t", source="s", payload={}),
+    )
+    sub = await subscription_service.create_subscription(
+        db,
+        SubscriptionCreate(url="https://example.test/hook"),
+        default_secret="secret",
+    )
+    delivery_id = await delivery_service.ensure_pending_delivery(
+        db, event_id=event.id, subscription_id=sub.id
+    )
+    await delivery_service.record_attempt(
+        db,
+        delivery_id=delivery_id,
+        attempt_no=1,
+        http_status=200,
+        error=None,
+        duration_ms=10,
+    )
+
+    assert await subscription_service.delete_subscription(db, sub.id) is True
+    assert await subscription_service.get_subscription(db, sub.id) is None
+    assert await delivery_service.get_delivery(db, delivery_id) is None
+
+
+@pytest.mark.anyio
 async def test_delivery_lifecycle(db: Connection) -> None:
     event = await event_service.create_event(
         db,
